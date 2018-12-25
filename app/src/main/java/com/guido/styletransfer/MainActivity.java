@@ -7,6 +7,7 @@ import android.graphics.Matrix;
 import android.net.Uri;
 import android.os.Environment;
 import android.provider.MediaStore;
+import android.support.annotation.Nullable;
 import android.support.v4.content.FileProvider;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
@@ -15,6 +16,7 @@ import android.util.TimingLogger;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
+import android.widget.Switch;
 
 import org.tensorflow.contrib.android.TensorFlowInferenceInterface;
 
@@ -22,9 +24,20 @@ import java.io.File;
 import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
+import java.io.OutputStream;
+import java.nio.Buffer;
+import java.nio.ByteBuffer;
 import java.text.SimpleDateFormat;
+import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
+
+import okhttp3.MediaType;
+import okhttp3.OkHttpClient;
+import okhttp3.Request;
+import okhttp3.RequestBody;
+import okhttp3.Response;
+import okio.BufferedSink;
 
 public class MainActivity extends AppCompatActivity {
 
@@ -42,6 +55,7 @@ public class MainActivity extends AppCompatActivity {
     File photoFile;
     private FileInputStream is = null;
     private static final int CODE = 1;
+    private boolean workingRemotely = false;
 
     private TensorFlowInferenceInterface inferenceInterface;
 
@@ -127,7 +141,65 @@ public class MainActivity extends AppCompatActivity {
         return newBM;
     }
 
-    private Bitmap stylizeImage(Bitmap bitmap) {
+    private Bitmap stylizeImage(Bitmap bitmap, boolean remote) {
+        if (remote) {
+            return stylizeImageRemote(bitmap);
+        } else {
+            return stylizeImageLocal(bitmap);
+        }
+    }
+
+    private Bitmap stylizeImageRemote(Bitmap bitmap) {
+        Bitmap scaledBitmap = scaleBitmap(bitmap, 480, 640); // desiredSize
+        scaledBitmap.getPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
+                scaledBitmap.getWidth(), scaledBitmap.getHeight());
+        Log.d(TAG, String.valueOf(intValues.length));
+        final String url = "http://192.168.43.196:7913/stylize/";
+        final OkHttpClient client = new OkHttpClient();
+        final MediaType IMAGE_JPEG = MediaType.parse("image/jpeg");
+        RequestBody body = new RequestBody() {
+            @Nullable
+            @Override
+            public MediaType contentType() {
+                return IMAGE_JPEG;
+            }
+
+            @Override
+            public void writeTo(BufferedSink sink) throws IOException {
+                OutputStream outputStream = sink.outputStream();
+                for (int val : intValues) {
+                    Log.d(TAG, String.valueOf(val));
+                    outputStream.write(val);
+                }
+            }
+        };
+
+        Request request = new Request.Builder().url(url).post(body).build();
+        try {
+            Response response = client.newCall(request).execute();
+            byte[] bytes = response.body().bytes();
+            floatValues = new float[bytes.length / 4];
+            for (int i = 0; i < floatValues.length; i++) {
+                float x = ByteBuffer.wrap(Arrays.copyOfRange(bytes, i*4, i*4+4)).getFloat();
+                floatValues[i] = x;
+            }
+        } catch (IOException e) {
+            e.printStackTrace();
+            return null;
+        }
+        for (int i = 0; i < intValues.length; ++i) {
+            intValues[i] =
+                    0xFF000000
+                            | (((int) (floatValues[i * 3])) << 16)
+                            | (((int) (floatValues[i * 3 + 1])) << 8)
+                            | ((int) (floatValues[i * 3 + 2]));
+        }
+        scaledBitmap.setPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
+                scaledBitmap.getWidth(), scaledBitmap.getHeight());
+        return scaledBitmap;
+    }
+
+    private Bitmap stylizeImageLocal(Bitmap bitmap) {
         TimingLogger timings = new TimingLogger(TAG, "stylizeImage");
         Bitmap scaledBitmap = scaleBitmap(bitmap, 480, 640); // desiredSize
         scaledBitmap.getPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
@@ -170,7 +242,7 @@ public class MainActivity extends AppCompatActivity {
                 try {
                     is = new FileInputStream(photoFile);
                     Bitmap bitmap = BitmapFactory.decodeStream(is);
-                    Bitmap bitmap2 = stylizeImage(bitmap);
+                    Bitmap bitmap2 = stylizeImage(bitmap, ((Switch)findViewById(R.id.switchRemote)).isChecked());
                     ivPhoto.setImageBitmap(bitmap2);
                 } catch (FileNotFoundException e) {
                     e.printStackTrace();
