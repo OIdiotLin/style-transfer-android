@@ -11,6 +11,7 @@ import android.support.v4.content.FileProvider;
 import android.support.v7.app.AppCompatActivity;
 import android.os.Bundle;
 import android.util.Log;
+import android.util.TimingLogger;
 import android.view.View;
 import android.widget.Button;
 import android.widget.ImageView;
@@ -47,6 +48,8 @@ public class MainActivity extends AppCompatActivity {
     @Override
     protected void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        Log.d(TAG, "MainActivity onCreate");
+        TimingLogger timing = new TimingLogger(TAG, "onCreate");
         setContentView(R.layout.activity_main);
 
         ivPhoto = (ImageView) findViewById(R.id.ivPhoto);
@@ -74,8 +77,11 @@ public class MainActivity extends AppCompatActivity {
                 }
             }
         });
+        timing.addSplit("UI rendered");
 
         initTensorFlowAndLoadModel();
+        timing.addSplit("TensorFlow initialized");
+        timing.dumpToLog();
     }
 
     private File createImageFile() throws IOException {
@@ -102,6 +108,7 @@ public class MainActivity extends AppCompatActivity {
     }
 
     private Bitmap scaleBitmap(Bitmap origin, int newWidth, int newHeight) {
+        TimingLogger timings = new TimingLogger(TAG, "scaleBitmap");
         if (origin == null) {
             return null;
         }
@@ -115,10 +122,13 @@ public class MainActivity extends AppCompatActivity {
         if (!origin.isRecycled()) {
             origin.recycle();
         }
+        timings.addSplit("scaling");
+        timings.dumpToLog();
         return newBM;
     }
 
     private Bitmap stylizeImage(Bitmap bitmap) {
+        TimingLogger timings = new TimingLogger(TAG, "stylizeImage");
         Bitmap scaledBitmap = scaleBitmap(bitmap, 480, 640); // desiredSize
         scaledBitmap.getPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
                 scaledBitmap.getWidth(), scaledBitmap.getHeight());
@@ -128,6 +138,7 @@ public class MainActivity extends AppCompatActivity {
             floatValues[i * 3 + 1] = ((val >> 8) & 0xFF) * 1.0f;
             floatValues[i * 3 + 2] = (val & 0xFF) * 1.0f;
         }
+        timings.addSplit("Rebuild input tensor");
 
         // Copy the input data into TensorFlow.
         inferenceInterface.feed(INPUT_NODE, floatValues, 640, 480, 3);
@@ -135,6 +146,7 @@ public class MainActivity extends AppCompatActivity {
         inferenceInterface.run(new String[]{OUTPUT_NODE});
         // Copy the output Tensor back into the output array.
         inferenceInterface.fetch(OUTPUT_NODE, floatValues);
+        timings.addSplit("Inference");
 
         for (int i = 0; i < intValues.length; ++i) {
             intValues[i] =
@@ -145,6 +157,8 @@ public class MainActivity extends AppCompatActivity {
         }
         scaledBitmap.setPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
                 scaledBitmap.getWidth(), scaledBitmap.getHeight());
+        timings.addSplit("Rebuild output image");
+        timings.dumpToLog();
         return scaledBitmap;
     }
 
