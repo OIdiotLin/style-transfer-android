@@ -5,6 +5,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Matrix;
 import android.net.Uri;
+import android.os.AsyncTask;
 import android.os.Environment;
 import android.provider.MediaStore;
 import android.support.annotation.Nullable;
@@ -27,10 +28,12 @@ import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.Buffer;
 import java.nio.ByteBuffer;
+import java.nio.IntBuffer;
 import java.text.SimpleDateFormat;
 import java.util.Arrays;
 import java.util.Date;
 import java.util.Locale;
+import java.util.concurrent.ExecutionException;
 
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
@@ -154,7 +157,7 @@ public class MainActivity extends AppCompatActivity {
         scaledBitmap.getPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
                 scaledBitmap.getWidth(), scaledBitmap.getHeight());
         Log.d(TAG, String.valueOf(intValues.length));
-        final String url = "http://192.168.43.196:7913/stylize/";
+        final String url = "http://192.168.1.153:8090/stylize";
         final OkHttpClient client = new OkHttpClient();
         final MediaType IMAGE_JPEG = MediaType.parse("image/jpeg");
         RequestBody body = new RequestBody() {
@@ -168,31 +171,40 @@ public class MainActivity extends AppCompatActivity {
             public void writeTo(BufferedSink sink) throws IOException {
                 OutputStream outputStream = sink.outputStream();
                 for (int val : intValues) {
-                    Log.d(TAG, String.valueOf(val));
-                    outputStream.write(val);
+                    outputStream.write(ByteBuffer.allocate(4).putInt(val).array());
                 }
             }
         };
 
-        Request request = new Request.Builder().url(url).post(body).build();
-        try {
-            Response response = client.newCall(request).execute();
-            byte[] bytes = response.body().bytes();
-            floatValues = new float[bytes.length / 4];
-            for (int i = 0; i < floatValues.length; i++) {
-                float x = ByteBuffer.wrap(Arrays.copyOfRange(bytes, i*4, i*4+4)).getFloat();
-                floatValues[i] = x;
+        final Request request = new Request.Builder().url(url).post(body).build();
+
+        AsyncTask task = new AsyncTask() {
+            @Override
+            protected Object doInBackground(Object[] objects) {
+                final Response response;
+                try {
+                    response = client.newCall(request).execute();
+                    Log.d(TAG, "doInBackground: response");
+                } catch (IOException e) {
+                    e.printStackTrace();
+                    return null;
+                }
+                return response;
             }
-        } catch (IOException e) {
+        };
+
+        try {
+            Object obj = task.execute().get();
+            Response response = (Response) obj;
+            byte[] bytes = response.body().bytes();
+            intValues = new int[bytes.length / 4];
+            for (int i = 0; i < intValues.length; i++) {
+                int x = ByteBuffer.wrap(Arrays.copyOfRange(bytes, i*4, i*4+4)).getInt();
+                intValues[i] = x;
+            }
+        } catch (IOException | ExecutionException | InterruptedException e) {
             e.printStackTrace();
             return null;
-        }
-        for (int i = 0; i < intValues.length; ++i) {
-            intValues[i] =
-                    0xFF000000
-                            | (((int) (floatValues[i * 3])) << 16)
-                            | (((int) (floatValues[i * 3 + 1])) << 8)
-                            | ((int) (floatValues[i * 3 + 2]));
         }
         scaledBitmap.setPixels(intValues, 0, scaledBitmap.getWidth(), 0, 0,
                 scaledBitmap.getWidth(), scaledBitmap.getHeight());
